@@ -52,14 +52,17 @@ export default function (pi: ExtensionAPI) {
   });
 }
 
-/** Returns true if cmd contains a git commit (not --amend on a non-main branch). */
+/** Returns true if cmd contains a git commit command (not inside quotes). */
 function isGitCommit(cmd: string): boolean {
-  return /\bgit\s+(?:(?:-\S+|--\S+)\s+)*commit\b/.test(cmd);
+  // Strip quoted strings to avoid matching text inside commit messages/titles
+  const stripped = cmd.replace(/(["'])(?:(?!\1).)*\1/g, "");
+  return /\bgit\s+(?:(?:-\S+|--\S+)\s+)*commit\b/.test(stripped);
 }
 
-/** Returns true if cmd contains a git push (not git stash push). */
+/** Returns true if cmd contains a git push (not git stash push, not inside quotes). */
 function isGitPush(cmd: string): boolean {
-  return /\bgit\s+(?:\S+\s+)*?push\b/.test(cmd) && !/\bgit\s+stash\s+push\b/.test(cmd);
+  const stripped = cmd.replace(/(["'])(?:(?!\1).)*\1/g, "");
+  return /\bgit\s+(?:\S+\s+)*?push\b/.test(stripped) && !/\bgit\s+stash\s+push\b/.test(stripped);
 }
 
 /**
@@ -75,10 +78,10 @@ function isGitPush(cmd: string): boolean {
  * creating a branch first).
  */
 function isOnProtectedBranch(cmd: string): boolean {
-  // If the command creates/switches to a non-protected branch before committing, allow it.
-  // Match: git checkout -b <name> or git switch -c <name> appearing before git commit
-  const commitIdx = cmd.search(/\bgit\s+(?:(?:-\S+|--\S+)\s+)*commit\b/);
-  const branchBefore = cmd.slice(0, commitIdx);
+  // Strip quoted strings to avoid matching branch names inside message text
+  const stripped = cmd.replace(/(["'])(?:(?!\1).)*\1/g, "");
+  const commitIdx = stripped.search(/\bgit\s+(?:(?:-\S+|--\S+)\s+)*commit\b/);
+  const branchBefore = stripped.slice(0, commitIdx);
 
   // Check for branch creation before commit
   const checkoutMatch = branchBefore.match(
@@ -104,7 +107,8 @@ function isOnProtectedBranch(cmd: string): boolean {
  * Determines if a git push command targets a protected branch.
  */
 function isPushToProtectedBranch(cmd: string): boolean {
-  const normalized = cmd.replace(/#.*$/gm, "").trim();
+  // Strip quoted strings to avoid matching branch names inside message text
+  const normalized = cmd.replace(/(["'])(?:(?!\1).)*\1/g, "").replace(/#.*$/gm, "").trim();
 
   for (const branch of PROTECTED_BRANCHES) {
     // Explicit branch name as refspec: `git push origin main`
