@@ -102,21 +102,23 @@ function isPushToProtectedBranch(cmd: string): boolean {
   const normalized = cmd.replace(/#.*$/gm, "").trim();
 
   for (const branch of PROTECTED_BRANCHES) {
-    // Explicit branch name as a standalone word after push + remote:
-    // `git push origin main` but not `git push origin main-feature`
-    if (new RegExp(`\\bgit\\s+.*\\bpush\\s+\\S+\\s+${branch}\\s*$`).test(normalized)) return true;
-    if (new RegExp(`\\bgit\\s+.*\\bpush\\s+\\S+\\s+${branch}\\s`).test(normalized)) return true;
+    // Branch name appears after `git push` — must not be followed by word chars or hyphens
+    // (avoids matching main-feature, main-dev, etc.)
+    const branchEnd = `(?![\\w-])`; // negative lookahead: not followed by word char or hyphen
+    if (new RegExp(`\\bgit\\s+[^;|&]*\\bpush\\b[^;|&]*(?:^|\\s)${branch}${branchEnd}`).test(normalized))
+      return true;
 
-    // HEAD:branch or HEAD:refs/heads/branch refspec
-    if (new RegExp(`HEAD:(?:refs/heads/)?${branch}\\b`).test(normalized)) return true;
+    // Refspec with colon: <anything>:main or <anything>:refs/heads/main
+    if (new RegExp(`:(?:refs/heads/)?${branch}${branchEnd}`).test(normalized)) return true;
   }
 
   // Bare `git push` with no refspec — could push current branch (which might be main)
   if (/\bgit\s+(?:(?:--\S+|-\S)\s+)*push\s*$/.test(normalized)) return true;
 
-  // `git push origin` with no refspec
-  const bareRemoteMatch = normalized.match(/\bgit\s+(?:(?:--\S+|-\S)\s+)*push\s+(\S+)\s*$/);
+  // `git push <remote>` with no refspec (no branch, no colon, no flags after remote)
+  const bareRemoteMatch = normalized.match(/\bgit\s+[^;|&]*\bpush\s+(?:(?:--\S+|-\S)\s+)*(\S+)\s*$/);
   if (bareRemoteMatch && !bareRemoteMatch[1].startsWith("-") && !bareRemoteMatch[1].includes(":")) {
+    // It's just `git push <remote>` — no refspec given
     return true;
   }
 
