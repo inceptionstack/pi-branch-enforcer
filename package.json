@@ -1,7 +1,7 @@
 {
   "name": "@inceptionstack/pi-branch-enforcer",
-  "version": "1.0.0",
-  "description": "Pi extension — prevents git push directly to main/master, enforces branch workflow",
+  "version": "1.1.1",
+  "description": "Pi extension — prevents git commit/push directly to main/master, enforces branch workflow",
   "keywords": ["pi", "extension", "git", "branch", "workflow"],
   "pi": {
     "extensions": ["./index.ts"]

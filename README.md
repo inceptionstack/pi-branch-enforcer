@@ -1,6 +1,6 @@
 # pi-branch-enforcer
 
-Pi extension that prevents `git push` directly to `main` or `master` branches. Forces agents to use feature branches and pull requests.
+Pi extension that prevents `git commit` and `git push` directly to `main` or `master` branches. Forces agents to use feature branches and pull requests.
 
 ## Install
 
@@ -16,22 +16,27 @@ Or add to your `~/.pi/agent/settings.json`:
 }
 ```
 
-## What it does
+## What it blocks
 
-Intercepts `bash` tool calls containing `git push` and blocks them if:
-
-- The push targets `main` or `master` explicitly (`git push origin main`)
-- The push uses a refspec pointing to a protected branch (`HEAD:main`)
-- The push has no refspec (bare `git push` — could push current branch to main)
-
-When blocked, the agent receives a clear error message with instructions to create a branch and PR instead.
+- `git commit` while on `main` or `master` (any commit without a prior branch switch)
+- `git push origin main` or any push targeting a protected branch
+- Bare `git push` (could push current main branch)
+- Force push to protected branches
 
 ## What it allows
 
-- `git push origin feature-branch` ✅
-- `git push origin --tags` ✅
-- `git push origin v1.0.0` (tag push) ✅
-- Any push to a non-protected branch ✅
+- `git checkout -b feature && git commit` ✔️ (branch created first)
+- `git push origin feature-branch` ✔️
+- `git push origin --tags` ✔️
+- Any commit/push on a non-protected branch ✔️
+
+## How it works
+
+Intercepts `bash` tool calls and checks:
+1. **Commits**: Blocked unless the same command chain creates/switches to a non-protected branch before the commit
+2. **Pushes**: Blocked if the refspec targets main/master or no refspec is given
+
+When blocked, the agent receives clear instructions to create a branch and PR.
 
 ## Configuration
 
