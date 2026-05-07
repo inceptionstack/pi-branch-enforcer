@@ -4,6 +4,11 @@
  * Prevents git commit and git push directly to main/master branches.
  * Forces agents to use feature branches and PRs for all changes.
  *
+ * Uses a two-tier detection strategy:
+ * 1. Fast regex for direct git commands (commit/push on protected branches)
+ * 2. LLM judge (Haiku) for complex commands that may bypass protection
+ *    via subprocess wrappers (python, node, perl, ruby, etc.)
+ *
  * Install:
  *   pi install npm:@inceptionstack/pi-branch-enforcer
  */
@@ -21,16 +26,18 @@ const BRANCH_FIX_INSTRUCTIONS =
   `  3. Push the branch: git push origin <branch-name>\n` +
   `  4. Create a PR: gh pr create --base main`;
 
+/** Model to use for LLM-based bypass detection. */
+const JUDGE_MODEL = "us.anthropic.claude-haiku-4-5-20251001-v1:0";
+
 export default function (pi: ExtensionAPI) {
   pi.on("tool_call", async (event, ctx) => {
     if (!isToolCallEventType("bash", event)) return;
     const cmd = event.input.command ?? "";
 
-    // Check for git commit on a protected branch
+    // Tier 1: Fast regex for direct git commands
     if (isGitCommit(cmd)) {
       if (createsBranchBeforeCommit(cmd)) return;
 
-      // Determine the effective working directory from the command
       const effectiveCwd = resolveEffectiveCwd(cmd, ctx.cwd);
       const branch = await getBranchViaExec(pi, effectiveCwd);
 
@@ -44,7 +51,6 @@ export default function (pi: ExtensionAPI) {
       }
     }
 
-    // Check for git push to a protected branch
     if (isGitPush(cmd) && isPushToProtectedBranch(cmd)) {
       return {
         block: true,
@@ -53,15 +59,25 @@ export default function (pi: ExtensionAPI) {
           BRANCH_FIX_INSTRUCTIONS,
       };
     }
+
+    // Tier 2: LLM judge for complex/obfuscated commands
+    if (looksLikeBypassAttempt(cmd)) {
+      const verdict = await judgeWithLLM(pi, cmd);
+      if (verdict) {
+        return {
+          block: true,
+          reason:
+            `Push blocked: command appears to bypass branch protection via subprocess. ` +
+            BRANCH_FIX_INSTRUCTIONS,
+        };
+      }
+    }
   });
 }
 
-/**
- * Resolve the effective working directory from a bash command.
- * Finds the last `cd <path>` before the git command.
- */
+// ─── Tier 1: Direct git command detection (regex, fast) ──────────────────────
+
 function resolveEffectiveCwd(cmd: string, sessionCwd: string): string {
-  // Find all cd commands and use the last one (closest to the git command)
   const cdMatches = [...cmd.matchAll(/\bcd\s+([^\s;&|]+)/g)];
   if (cdMatches.length > 0) {
     const lastCd = cdMatches[cdMatches.length - 1][1];
@@ -72,7 +88,6 @@ function resolveEffectiveCwd(cmd: string, sessionCwd: string): string {
   return sessionCwd;
 }
 
-/** Get branch by running git in the resolved directory. */
 async function getBranchViaExec(pi: ExtensionAPI, cwd: string): Promise<string | null> {
   try {
     const result = await pi.exec("git", ["-C", cwd, "branch", "--show-current"], { timeout: 3000 });
@@ -81,12 +96,10 @@ async function getBranchViaExec(pi: ExtensionAPI, cwd: string): Promise<string |
   return null;
 }
 
-/** Returns true if cmd contains a git commit command (not in quotes). */
 function isGitCommit(cmd: string): boolean {
   return /\bgit\s+(?:(?:-\S+|--\S+)\s+)*commit\b/.test(stripQuotedContent(cmd));
 }
 
-/** Returns true if the command creates a non-protected branch before committing. */
 function createsBranchBeforeCommit(cmd: string): boolean {
   const stripped = stripQuotedContent(cmd);
   const commitIdx = stripped.search(/\bgit\s+(?:(?:-\S+|--\S+)\s+)*commit\b/);
@@ -98,31 +111,23 @@ function createsBranchBeforeCommit(cmd: string): boolean {
   return false;
 }
 
-/** Returns true if cmd contains a git push (not git stash push, not in quotes). */
 function isGitPush(cmd: string): boolean {
   const stripped = stripQuotedContent(cmd);
   return /\bgit\s+(?:\S+\s+)*?push\b/.test(stripped) && !/\bgit\s+stash\s+push\b/.test(stripped);
 }
 
-/**
- * Determines if a git push command targets a protected branch.
- */
 function isPushToProtectedBranch(cmd: string): boolean {
   const normalized = cmd.replace(/#.*$/gm, "").trim();
 
   for (const branch of PROTECTED_BRANCHES) {
     const branchEnd = `(?![\\w-])`;
-    // Branch name after push (with possible flags/remote in between)
     if (new RegExp(`\\bgit\\s+[^;|&]*\\bpush\\b[^;|&]*(?:^|\\s)${branch}${branchEnd}`).test(normalized))
       return true;
-    // Refspec: <anything>:main or <anything>:refs/heads/main
     if (new RegExp(`:(?:refs/heads/)?${branch}${branchEnd}`).test(normalized)) return true;
   }
 
-  // Bare `git push` with no refspec
   if (/\bgit\s+(?:(?:--\S+|-\S)\s+)*push\s*$/.test(normalized)) return true;
 
-  // `git push <remote>` with no refspec
   const bareRemoteMatch = normalized.match(/\bgit\s+[^;|&]*\bpush\s+(?:(?:--\S+|-\S)\s+)*(\S+)\s*$/);
   if (bareRemoteMatch && !bareRemoteMatch[1].startsWith("-") && !bareRemoteMatch[1].includes(":")) {
     return true;
@@ -131,7 +136,70 @@ function isPushToProtectedBranch(cmd: string): boolean {
   return false;
 }
 
-/** Remove quoted content to avoid matching git commands in message text. */
 function stripQuotedContent(cmd: string): string {
   return cmd.replace(/(["'])(?:(?!\1).)*\1/g, "$1$1");
+}
+
+// ─── Tier 2: LLM-based bypass detection ─────────────────────────────────────
+
+/**
+ * Quick regex pre-filter: does this command look like it MIGHT be a bypass?
+ * Must contain: a scripting language + git + push/commit.
+ * This is intentionally broad — the LLM judge makes the final call.
+ */
+function looksLikeBypassAttempt(cmd: string): boolean {
+  // Must involve a scripting language
+  if (!/\b(?:python3?|python|node|perl|ruby|php|bash\s+-c|sh\s+-c)\b/.test(cmd)) return false;
+  // Must mention git
+  if (!/\bgit\b/.test(cmd)) return false;
+  // Must mention push or commit
+  if (!/\b(?:push|commit)\b/.test(cmd)) return false;
+  return true;
+}
+
+/**
+ * Call Haiku to judge whether a command is attempting to bypass branch protection.
+ * Returns true if the LLM determines it's a bypass attempt targeting main/master.
+ * Returns false on any error (fail-open to avoid blocking legitimate work).
+ */
+async function judgeWithLLM(pi: ExtensionAPI, cmd: string): Promise<boolean> {
+  const prompt = `You are a security gate for git branch protection. Protected branches: main, master.
+
+Does this bash command use a scripting language (python/node/perl/ruby/sh -c) as a subprocess wrapper to execute "git push" or "git commit" TARGETING a protected branch?
+
+Rules:
+- BLOCK: subprocess executes "git push" to main/master (e.g. push origin main)
+- BLOCK: subprocess executes a bare "git push" with no branch (defaults to current/protected)
+- ALLOW: subprocess pushes to a feature branch (anything other than main/master)
+- ALLOW: "main" or "master" appears only inside a commit message (-m "..."), file path, or variable — NOT as a git push target
+- ALLOW: the git command is only a commit (not a push) and doesn't specify it's on main/master
+- ALLOW: the scripting language does something unrelated to git
+
+Command:
+\`\`\`
+${cmd}
+\`\`\`
+
+Respond with ONLY one word: BLOCK or ALLOW`;
+
+  try {
+    const result = await pi.exec("aws", [
+      "bedrock-runtime", "converse",
+      "--region", "us-east-1",
+      "--model-id", JUDGE_MODEL,
+      "--messages", JSON.stringify([{ role: "user", content: [{ text: prompt }] }]),
+      "--inference-config", JSON.stringify({ maxTokens: 4, temperature: 0 }),
+      "--query", "output.message.content[0].text",
+      "--output", "text",
+    ], { timeout: 10_000 });
+
+    if (result.code === 0) {
+      const answer = result.stdout.trim().toUpperCase();
+      return answer === "BLOCK";
+    }
+  } catch {
+    // Fail open — if LLM is unavailable, allow the command
+  }
+
+  return false;
 }
