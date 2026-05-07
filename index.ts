@@ -163,9 +163,9 @@ function looksLikeBypassAttempt(cmd: string): boolean {
  * Returns false on any error (fail-open to avoid blocking legitimate work).
  */
 async function judgeWithLLM(pi: ExtensionAPI, cmd: string): Promise<boolean> {
-  // Sanitize to prevent XML tag escape and limit token usage
-  const sanitized = cmd.replace(/<\//g, "&lt;/");
-  const truncatedCmd = sanitized.length > 2000 ? sanitized.slice(0, 2000) + "\n[truncated]" : sanitized;
+  // Sanitize XML-like content and truncate to limit injection surface
+  const truncatedCmd = cmd.length > 2000 ? cmd.slice(0, 2000) + "\n[truncated]" : cmd;
+  const sanitized = truncatedCmd.replace(/</g, "&lt;");
 
   const systemPrompt = [
     "You are a strict security gate. Respond with ONLY one word: BLOCK or ALLOW.",
@@ -184,7 +184,7 @@ Rules:
 - ALLOW: the scripting language does something unrelated to git
 
 <untrusted_command>
-${truncatedCmd}
+${sanitized}
 </untrusted_command>`;
 
   try {
