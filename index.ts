@@ -163,8 +163,9 @@ function looksLikeBypassAttempt(cmd: string): boolean {
  * Returns false on any error (fail-open to avoid blocking legitimate work).
  */
 async function judgeWithLLM(pi: ExtensionAPI, cmd: string): Promise<boolean> {
-  // Truncate to limit token usage and reduce injection surface
-  const truncatedCmd = cmd.length > 2000 ? cmd.slice(0, 2000) + "\n[truncated]" : cmd;
+  // Sanitize to prevent XML tag escape and limit token usage
+  const sanitized = cmd.replace(/<\//g, "&lt;/");
+  const truncatedCmd = sanitized.length > 2000 ? sanitized.slice(0, 2000) + "\n[truncated]" : sanitized;
 
   const systemPrompt = [
     "You are a strict security gate. Respond with ONLY one word: BLOCK or ALLOW.",
