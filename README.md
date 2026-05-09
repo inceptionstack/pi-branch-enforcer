@@ -34,7 +34,7 @@ Or add to your `~/.pi/agent/settings.json`:
 
 ## How it works
 
-Two-tier detection strategy:
+Three-tier detection strategy:
 
 ### Tier 1: Fast regex (< 1ms)
 Intercepts `bash` tool calls and checks:
@@ -48,12 +48,19 @@ For complex commands involving scripting languages (python, node, perl, ruby, sh
 3. Catches novel bypass patterns without brittle regex maintenance
 4. Fails open if LLM is unavailable (no blocking legitimate work)
 
+### Tier 3: Script file inspection (~1-3s)
+Detects when a scripting language executes a file (e.g. `node /tmp/script.js`):
+1. Extracts the file path from the command
+2. Reads the file contents (first 4KB)
+3. If contents mention `git` + `push`/`commit`, sends to the LLM judge
+4. Catches the "write bypass to file, then run it" evasion pattern
+
 **Why LLM over regex?** Subprocess bypass detection via regex is a game of whack-a-mole — every new pattern (backticks, os.system, child_process variants, encoding tricks) requires a new rule. An LLM understands *intent*, catching patterns we haven't anticipated while correctly allowing "main" in commit messages, file paths, or variable names.
 
 ## Requirements
 
 - **Tier 1**: No external dependencies (works everywhere)
-- **Tier 2**: Requires AWS Bedrock access in `us-east-1`:
+- **Tier 2 & 3**: Requires AWS Bedrock access in `us-east-1`:
   - Model: `us.anthropic.claude-haiku-4-5-20251001-v1:0`
   - IAM permission: `bedrock:InvokeModel`
   - The `aws` CLI must be available and authenticated
