@@ -72,6 +72,23 @@ export default function (pi: ExtensionAPI) {
         };
       }
     }
+
+    // Tier 3: Script file execution — check file contents for git push/commit
+    const scriptFile = extractScriptFile(cmd);
+    if (scriptFile) {
+      const fileContent = await readScriptFile(pi, scriptFile, ctx.cwd);
+      if (fileContent && looksLikeBypassContent(fileContent)) {
+        const verdict = await judgeWithLLM(pi, `# File: ${scriptFile}\n${fileContent}`);
+        if (verdict) {
+          return {
+            block: true,
+            reason:
+              `Push blocked: script file contains git push to protected branch. ` +
+              BRANCH_FIX_INSTRUCTIONS,
+          };
+        }
+      }
+    }
   });
 }
 
@@ -210,4 +227,45 @@ ${sanitized}
   }
 
   return false;
+}
+
+// ─── Tier 3: Script file detection ─────────────────────────────────────────────────────
+
+/**
+ * Extract a script file path from a command like:
+ *   node /tmp/do-push.js
+ *   python3 /tmp/script.py
+ *   ruby ./hack.rb
+ * Returns null if no file argument detected.
+ */
+function extractScriptFile(cmd: string): string | null {
+  const match = cmd.match(
+    /\b(?:node|python3?|perl|ruby|php)\s+(?:-[\w-]+(?:=\S+)?\s+)*([^\s;|&]+\.(?:js|mjs|cjs|py|pl|rb|php|ts))\b/
+  );
+  return match?.[1] ?? null;
+}
+
+/**
+ * Read a script file's contents via pi.exec (sandboxed read).
+ * Returns null if file can't be read or is too large.
+ */
+async function readScriptFile(pi: ExtensionAPI, filePath: string, cwd: string): Promise<string | null> {
+  try {
+    const resolvedPath = filePath.startsWith("/") ? filePath : `${cwd}/${filePath}`;
+    const result = await pi.exec("head", ["-c", "4096", resolvedPath], { timeout: 3000 });
+    if (result.code === 0 && result.stdout) {
+      return result.stdout;
+    }
+  } catch {}
+  return null;
+}
+
+/**
+ * Quick check if file contents look like they contain git push/commit.
+ * Gates the LLM call to avoid unnecessary invocations.
+ */
+function looksLikeBypassContent(content: string): boolean {
+  if (!/\bgit\b/.test(content)) return false;
+  if (!/\b(?:push|commit)\b/.test(content)) return false;
+  return true;
 }
