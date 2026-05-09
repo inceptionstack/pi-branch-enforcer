@@ -262,6 +262,12 @@ async function readScriptFile(pi: ExtensionAPI, filePath: string, cwd: string): 
     let expanded = filePath.replace(/^~/, process.env.HOME ?? "/tmp");
     const resolvedPath = expanded.startsWith("/") ? resolve(expanded) : resolve(cwd, expanded);
 
+    // Restrict to cwd subtree, /tmp, or HOME to prevent arbitrary file reads
+    const home = process.env.HOME ?? "/nonexistent";
+    if (!resolvedPath.startsWith(cwd + "/") && !resolvedPath.startsWith("/tmp/") && !resolvedPath.startsWith(home + "/")) {
+      return null;
+    }
+
     const result = await pi.exec("head", ["-c", "4096", resolvedPath], { timeout: 3000 });
     if (result.code === 0 && result.stdout) {
       return result.stdout;
