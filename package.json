@@ -1,13 +1,21 @@
 {
   "name": "@inceptionstack/pi-branch-enforcer",
-  "version": "3.1.2",
+  "version": "3.2.0",
   "description": "Pi extension — prevents git commit/push directly to main/master, enforces branch workflow",
-  "keywords": ["pi", "extension", "git", "branch", "workflow"],
+  "keywords": [
+    "pi",
+    "extension",
+    "git",
+    "branch",
+    "workflow"
+  ],
   "pi": {
-    "extensions": ["./index.ts"]
+    "extensions": [
+      "./index.ts"
+    ]
   },
   "peerDependencies": {
-    "@mariozechner/pi-coding-agent": "*"
+    "@earendil-works/pi-coding-agent": "*"
   },
   "license": "Apache-2.0",
   "repository": {

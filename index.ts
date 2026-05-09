@@ -15,7 +15,7 @@
  *   pi install npm:@inceptionstack/pi-branch-enforcer
  */
 
-import { type ExtensionAPI, isToolCallEventType } from "@mariozechner/pi-coding-agent";
+import { type ExtensionAPI, isToolCallEventType } from "@earendil-works/pi-coding-agent";
 
 /** Branch names that are protected from direct commits and pushes. */
 const PROTECTED_BRANCHES = new Set(["main", "master"]);
