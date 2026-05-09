@@ -264,7 +264,8 @@ async function readScriptFile(pi: ExtensionAPI, filePath: string, cwd: string): 
 
     // Restrict to cwd subtree, /tmp, or HOME to prevent arbitrary file reads
     const home = process.env.HOME ?? "/nonexistent";
-    if (!resolvedPath.startsWith(cwd + "/") && !resolvedPath.startsWith("/tmp/") && !resolvedPath.startsWith(home + "/")) {
+    const normCwd = cwd.replace(/\/$/, "");
+    if (!resolvedPath.startsWith(normCwd + "/") && !resolvedPath.startsWith("/tmp/") && !resolvedPath.startsWith(home + "/")) {
       return null;
     }
 
