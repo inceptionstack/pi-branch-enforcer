@@ -4,10 +4,12 @@
  * Prevents git commit and git push directly to main/master branches.
  * Forces agents to use feature branches and PRs for all changes.
  *
- * Uses a two-tier detection strategy:
+ * Uses a three-tier detection strategy:
  * 1. Fast regex for direct git commands (commit/push on protected branches)
  * 2. LLM judge (Haiku) for complex commands that may bypass protection
  *    via subprocess wrappers (python, node, perl, ruby, etc.)
+ * 3. Script file inspection — reads file contents when a scripting language
+ *    executes a file, checks for git push/commit, sends to LLM judge
  *
  * Install:
  *   pi install npm:@inceptionstack/pi-branch-enforcer
@@ -61,7 +63,8 @@ export default function (pi: ExtensionAPI) {
     }
 
     // Tier 2: LLM judge for complex/obfuscated commands
-    if (looksLikeBypassAttempt(cmd)) {
+    const tier2Fired = looksLikeBypassAttempt(cmd);
+    if (tier2Fired) {
       const verdict = await judgeWithLLM(pi, cmd);
       if (verdict) {
         return {
@@ -74,18 +77,21 @@ export default function (pi: ExtensionAPI) {
     }
 
     // Tier 3: Script file execution — check file contents for git push/commit
-    const scriptFile = extractScriptFile(cmd);
-    if (scriptFile) {
-      const fileContent = await readScriptFile(pi, scriptFile, ctx.cwd);
-      if (fileContent && looksLikeBypassContent(fileContent)) {
-        const verdict = await judgeWithLLM(pi, `# File: ${scriptFile}\n${fileContent}`);
-        if (verdict) {
-          return {
-            block: true,
-            reason:
-              `Push blocked: script file contains git push to protected branch. ` +
-              BRANCH_FIX_INSTRUCTIONS,
-          };
+    // Skip if Tier 2 already fired (avoids double LLM calls)
+    if (!tier2Fired) {
+      const scriptFile = extractScriptFile(cmd);
+      if (scriptFile) {
+        const fileContent = await readScriptFile(pi, scriptFile, ctx.cwd);
+        if (fileContent && looksLikeBypassContent(fileContent)) {
+          const verdict = await judgeWithLLM(pi, `# File: ${scriptFile}\n${fileContent}`);
+          if (verdict) {
+            return {
+              block: true,
+              reason:
+                `Push blocked: script file contains git push to protected branch. ` +
+                BRANCH_FIX_INSTRUCTIONS,
+            };
+          }
         }
       }
     }
@@ -251,7 +257,11 @@ function extractScriptFile(cmd: string): string | null {
  */
 async function readScriptFile(pi: ExtensionAPI, filePath: string, cwd: string): Promise<string | null> {
   try {
-    const resolvedPath = filePath.startsWith("/") ? filePath : `${cwd}/${filePath}`;
+    // Expand ~ and resolve relative paths (collapses .. segments)
+    const { resolve } = await import("node:path");
+    let expanded = filePath.replace(/^~/, process.env.HOME ?? "/tmp");
+    const resolvedPath = expanded.startsWith("/") ? resolve(expanded) : resolve(cwd, expanded);
+
     const result = await pi.exec("head", ["-c", "4096", resolvedPath], { timeout: 3000 });
     if (result.code === 0 && result.stdout) {
       return result.stdout;
