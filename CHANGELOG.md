@@ -2,6 +2,13 @@
 
 All notable changes to `@inceptionstack/pi-branch-enforcer` are documented here.
 
+## [3.2.1] — 2026-05-10
+
+### Fixed
+- Tag pushes (e.g. `git push origin v1.2.3`) no longer trigger Tier 2 LLM judge
+- Added `isTagPushOnly()` early-exit before Tier 2/3: if command contains only tag-like refs (v\d+) and no protected branch names, skip LLM entirely
+- Added explicit ALLOW rule for tags in LLM judge prompt (defense-in-depth)
+
 ## [3.1.2] — 2026-05-09
 
 ### Fixed
