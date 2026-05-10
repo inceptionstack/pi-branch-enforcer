@@ -187,8 +187,8 @@ function isTagPushOnly(cmd: string): boolean {
     // Check for branch name in push context (not in paths/messages)
     if (new RegExp(`\\bpush\\b[^;|&]*\\b${branch}\\b`).test(cmd)) return false;
   }
-  // Must contain at least one tag-like ref: v followed by digit
-  if (!/\bv\d+/.test(cmd)) return false;
+  // Must contain at least one semver-like tag ref after "push" (e.g. v1.2.3, v0.5.21)
+  if (!/\bpush\b[^;|&]*\bv\d+\.\d+/.test(cmd)) return false;
   return true;
 }
 
