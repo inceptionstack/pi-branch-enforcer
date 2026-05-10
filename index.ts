@@ -62,6 +62,9 @@ export default function (pi: ExtensionAPI) {
       };
     }
 
+    // Skip Tier 2/3 entirely for tag-only pushes (e.g. git push origin v1.2.3)
+    if (isTagPushOnly(cmd)) return;
+
     // Tier 2: LLM judge for complex/obfuscated commands
     const tier2Fired = looksLikeBypassAttempt(cmd);
     if (tier2Fired) {
@@ -163,6 +166,32 @@ function stripQuotedContent(cmd: string): string {
   return cmd.replace(/(["'])(?:(?!\1).)*\1/g, "$1$1");
 }
 
+// ─── Tag push detection (skip Tier 2/3 for tag-only pushes) ─────────────────
+
+/**
+ * Detect commands that only push tags (not branches) to a remote.
+ * Matches patterns like:
+ *   git push origin v1.2.3
+ *   git push origin v0.5.21 -f
+ *   git tag v1.0.0 && git push origin v1.0.0
+ *   perl -e 'system("git","push","origin","v1.2.3")'
+ *
+ * A "tag ref" is any ref matching v[0-9] (semver-like).
+ * Returns true only if ALL push targets are tag-like (no branch pushes hidden).
+ */
+function isTagPushOnly(cmd: string): boolean {
+  // Must contain push
+  if (!/\bpush\b/.test(cmd)) return false;
+  // Must NOT contain any protected branch name as a push target
+  for (const branch of PROTECTED_BRANCHES) {
+    // Check for branch name in push context (not in paths/messages)
+    if (new RegExp(`\\bpush\\b[^;|&]*\\b${branch}\\b`).test(cmd)) return false;
+  }
+  // Must contain at least one tag-like ref: v followed by digit
+  if (!/\bv\d+/.test(cmd)) return false;
+  return true;
+}
+
 // ─── Tier 2: LLM-based bypass detection ─────────────────────────────────────
 
 /**
@@ -202,6 +231,7 @@ async function judgeWithLLM(pi: ExtensionAPI, cmd: string): Promise<boolean> {
 Rules:
 - BLOCK: subprocess executes "git push" to main/master (e.g. push origin main)
 - BLOCK: subprocess executes a bare "git push" with no branch (defaults to current/protected)
+- ALLOW: subprocess pushes a tag (e.g. push origin v1.2.3, push origin v0.5.21)
 - ALLOW: subprocess pushes to a feature branch (not main/master)
 - ALLOW: "main"/"master" appears only in a commit message, file path, or variable — NOT as a push target
 - ALLOW: git command is only a commit (no push) without indication it's on main/master
