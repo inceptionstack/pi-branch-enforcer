@@ -2,6 +2,15 @@
 
 All notable changes to `@inceptionstack/pi-branch-enforcer` are documented here.
 
+## [3.3.0] — 2026-05-14
+
+### Added
+- **Runtime kill-switch** — enforcement can now be disabled without restarting the agent
+  - File-based: create `~/.pi-branch-enforcer/disabled` to disable; remove to re-enable
+  - Env var: `PI_BRANCH_ENFORCER_DISABLED=1` (process-scope only)
+  - Checked on every `tool_call`, so toggling takes effect on the next bash command
+  - Designed for use with roundhouse `/toggle-enforce-branches` (immediate, persisted across restarts)
+
 ## [3.2.1] — 2026-05-10
 
 ### Fixed

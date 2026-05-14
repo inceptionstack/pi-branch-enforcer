@@ -70,6 +70,30 @@ Detects when a scripting language executes a file (e.g. `node /tmp/script.js`):
 
 None needed. Works out of the box. Protected branches are `main` and `master`.
 
+## Disabling at runtime
+
+The extension honors a runtime kill-switch — useful when an automation needs
+to temporarily bypass enforcement (e.g. release scripts, recovery scenarios)
+without restarting the agent.
+
+**File-based (persistent):**
+```bash
+# Disable
+mkdir -p ~/.pi-branch-enforcer && touch ~/.pi-branch-enforcer/disabled
+
+# Re-enable
+rm ~/.pi-branch-enforcer/disabled
+```
+
+**Env var (process-scope only):**
+```bash
+PI_BRANCH_ENFORCER_DISABLED=1 pi ...
+```
+
+The file is checked on every `bash` tool call, so toggling takes effect on
+the **next** command — no agent restart required. Roundhouse exposes this
+as the `/toggle-enforce-branches` Telegram command.
+
 ## License
 
 Apache-2.0
