@@ -16,9 +16,29 @@
  */
 
 import { type ExtensionAPI, isToolCallEventType } from "@earendil-works/pi-coding-agent";
+import { existsSync } from "node:fs";
+import { join } from "node:path";
+import { homedir } from "node:os";
 
 /** Branch names that are protected from direct commits and pushes. */
 const PROTECTED_BRANCHES = new Set(["main", "master"]);
+
+/**
+ * Runtime kill-switch path. If this file exists OR the env var
+ * `PI_BRANCH_ENFORCER_DISABLED=1` is set, the extension fails open
+ * (returns immediately on every tool_call). Lets external tooling
+ * (e.g. roundhouse `/toggle-enforce-branches`) disable enforcement
+ * without restarting the agent.
+ *
+ * File-based switch is preferred over env var because it survives
+ * agent restarts and works for already-running processes.
+ */
+const DISABLED_MARKER_PATH = join(homedir(), ".pi-branch-enforcer", "disabled");
+
+function isDisabled(): boolean {
+  if (process.env.PI_BRANCH_ENFORCER_DISABLED === "1") return true;
+  try { return existsSync(DISABLED_MARKER_PATH); } catch { return false; }
+}
 
 const BRANCH_FIX_INSTRUCTIONS =
   `Use a feature branch for all changes.\n\n` +
@@ -34,6 +54,9 @@ const JUDGE_MODEL = "us.anthropic.claude-haiku-4-5-20251001-v1:0";
 export default function (pi: ExtensionAPI) {
   pi.on("tool_call", async (event, ctx) => {
     if (!isToolCallEventType("bash", event)) return;
+    // Runtime kill-switch — checked on every call so toggling takes effect
+    // immediately without restarting the agent.
+    if (isDisabled()) return;
     const cmd = event.input.command ?? "";
 
     // Tier 1: Fast regex for direct git commands
