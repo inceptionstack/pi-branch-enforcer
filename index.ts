@@ -65,6 +65,17 @@ export default function (pi: ExtensionAPI) {
     // Skip Tier 2/3 entirely for tag-only pushes (e.g. git push origin v1.2.3)
     if (isTagPushOnly(cmd)) return;
 
+    // Tier 1.5: Safe subprocess wrapper detection (before expensive LLM call)
+    const tier1_5Result = detectSubprocessWrapper(cmd);
+    if (tier1_5Result === 'blocked') {
+      return {
+        block: true,
+        reason:
+          `Push blocked: command uses subprocess wrapper to invoke git push/commit to protected branch. ` +
+          BRANCH_FIX_INSTRUCTIONS,
+      };
+    }
+
     // Tier 2: LLM judge for complex/obfuscated commands
     const tier2Fired = looksLikeBypassAttempt(cmd);
     if (tier2Fired) {
@@ -190,6 +201,57 @@ function isTagPushOnly(cmd: string): boolean {
   // Must contain at least one semver-like tag ref after "push" (e.g. v1.2.3, v0.5.21)
   if (!/\bpush\b[^;|&]*\bv\d+\.\d+/.test(cmd)) return false;
   return true;
+}
+
+// ─── Tier 1.5: Safe subprocess wrapper detection ────────────────────────────
+
+/**
+ * Detect common subprocess wrappers that invoke git push/commit.
+ * Uses safe pattern matching without invoking the LLM (unless pattern is too complex).
+ * Returns:
+ *   'blocked' — detected git push/commit via common wrapper pattern
+ *   'allowed' — safe to proceed
+ *   'escalate-to-llm' — ambiguous, let Tier 2 judge with LLM
+ */
+function detectSubprocessWrapper(cmd: string): 'blocked' | 'allowed' | 'escalate-to-llm' {
+  // perl -e 'system("git", "push", ...)'
+  if (/\bperl\s+(?:-\w+\s+)*-[eE]\s+['"]/.test(cmd)) {
+    const match = cmd.match(/\bperl\s+(?:-\w+\s+)*-[eE]\s+['"]([^'"]*)['"]/);
+    if (match && /\bgit\b.*\bpush\b/.test(match[1])) {
+      return 'blocked';
+    }
+  }
+
+  // python -c 'os.system("git push")' or 'subprocess.run(...)'
+  if (/\bpython\d?\s+(?:-\w+\s+)*-c\s+['"]/.test(cmd)) {
+    const match = cmd.match(/\bpython\d?\s+(?:-\w+\s+)*-c\s+['"]([^'"]*)['"]/);
+    if (match && /\bgit\b.*\bpush\b/.test(match[1])) {
+      return 'blocked';
+    }
+  }
+
+  // node -e 'child_process.exec("git push")'
+  if (/\bnode\s+(?:-\w+\s+)*-[eE]\s+['"]/.test(cmd)) {
+    const match = cmd.match(/\bnode\s+(?:-\w+\s+)*-[eE]\s+['"]([^'"]*)['"]/);
+    if (match && /\bgit\b.*\bpush\b/.test(match[1])) {
+      return 'blocked';
+    }
+  }
+
+  // ruby -e 'system("git push")'
+  if (/\bruby\s+(?:-\w+\s+)*-e\s+['"]/.test(cmd)) {
+    const match = cmd.match(/\bruby\s+(?:-\w+\s+)*-e\s+['"]([^'"]*)['"]/);
+    if (match && /\bgit\b.*\bpush\b/.test(match[1])) {
+      return 'blocked';
+    }
+  }
+
+  // Too many variables, too obfuscated → escalate to LLM
+  if (/\b(?:python3?|node|perl|ruby)\b/.test(cmd) && /\bgit\b/.test(cmd)) {
+    return 'escalate-to-llm';
+  }
+
+  return 'allowed';
 }
 
 // ─── Tier 2: LLM-based bypass detection ─────────────────────────────────────
